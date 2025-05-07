@@ -1,1 +1,385 @@
+# Before running this script, make sure you have the following libraries installed.
+# You can install them using pip in your terminal or command prompt:
+# pip install kivy
+# pip install krpc
 
+import krpc
+import kivy
+from kivy.app import App
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.label import Label
+from kivy.uix.textinput import TextInput
+from kivy.uix.button import Button
+from kivy.clock import Clock
+from kivy.core.window import Window # Import Window to set and get window size
+from kivy.graphics import Color, Ellipse, Line, PushMatrix, PopMatrix, Rotate, Translate # Import graphics instructions
+from kivy.uix.widget import Widget # Import base Widget class
+import time
+import math # Import math for calculations
+
+# Set a preferred initial window size
+Window.size = (1024, 600) # Changed default window size to 1024x600
+
+# --- Custom Navball Widget Placeholder ---
+class NavballWidget(Widget):
+    def __init__(self, **kwargs):
+        super(NavballWidget, self).__init__(**kwargs)
+        self.pitch = 0
+        self.roll = 0
+        self.heading = 0
+
+        with self.canvas:
+            # You will add your drawing instructions here
+            pass # Placeholder
+
+        self.bind(pos=self.update_canvas, size=self.update_canvas)
+
+    def update_orientation(self, pitch, roll, heading):
+        """Updates the Navball's orientation data and triggers a redraw."""
+        self.pitch = pitch
+        self.roll = roll
+        self.heading = heading
+        self.update_canvas() # Trigger a redraw
+
+    def update_canvas(self, *args):
+        """Clears the canvas and redraws the Navball elements."""
+        self.canvas.clear()
+        with self.canvas:
+            # --- Your KSP Navball Drawing Logic Goes Here ---
+            # This is where you will use kivy.graphics to draw the sphere, markers, etc.
+            # You'll apply rotations and translations based on self.pitch, self.roll, self.heading
+
+            # Get the smaller dimension to scale the Navball circle
+            navball_radius = min(self.size) / 2 * 0.9 # Use 90% of the smaller dimension
+
+            PushMatrix() # Save the current transformation state
+            Translate(self.center_x, self.center_y) # Move origin to widget center
+
+            # Apply rotations (order matters! depends on reference frame)
+            # Example: Rotate around X (pitch), then Z (heading), then Y (roll) - adjust as needed
+            # Convert degrees to radians for math functions if needed, but Kivy Rotate uses degrees
+            Rotate(angle=self.heading, axis=(0, 0, 1)) # Heading rotation around Z
+            Rotate(angle=self.pitch, axis=(1, 0, 0))   # Pitch rotation around X
+            Rotate(angle=self.roll, axis=(0, 1, 0))    # Roll rotation around Y
+
+
+            # Example Drawing: A simple colored circle as a stand-in for the sphere
+            # The actual Navball sphere drawing is much more complex, involving gradients or textures
+            Color(0.2, 0.4, 0.8, 1) # Sky color (example)
+            # Draw the sky part (top half of the circle) - needs clipping or more complex drawing
+            # For simplicity here, just drawing a full circle placeholder
+            Ellipse(pos=(-navball_radius, -navball_radius), size=(navball_radius * 2, navball_radius * 2))
+
+            Color(0.6, 0.4, 0.2, 1) # Ground color (example)
+            # Draw the ground part (bottom half) - needs clipping or more complex drawing
+            # For simplicity here, just drawing another full circle placeholder
+            # The actual implementation would draw segments or use textures with transformations
+
+
+            # Example: Draw a simple horizon line that rotates
+            Color(1, 1, 1, 1) # White color
+            Line(points=[-navball_radius, 0, navball_radius, 0], width=2) # Horizon line at pitch 0
+
+            # Add pitch markers - these lines would also rotate with the sphere
+            # Example: A marker at 30 degrees pitch
+            # Need to calculate position based on rotation and radius
+            # For simplicity, just a static line here
+            # Line(points=[-navball_radius * 0.8, navball_radius * math.sin(math.radians(30)), navball_radius * 0.8, navball_radius * math.sin(math.radians(30))], width=1)
+
+
+            PopMatrix() # Restore the saved transformation state
+
+            # Example: Draw a center dot (aircraft symbol stand-in) - this stays fixed
+            Color(1, 1, 1, 1) # White color
+            Ellipse(pos=(self.center_x - 5, self.center_y - 5), size=(10, 10))
+
+            # Add markers (prograde, target, etc.) here with appropriate transformations
+            # These markers' positions relative to the sphere depend on their direction vectors
+            # and the current sphere rotation.
+
+            # --- End of Your KSP Navball Drawing Logic ---
+
+
+# --- Kivy App and kRPC Integration ---
+class KRPC_Kivy_App(App):
+    def build(self):
+        # --- kRPC Connection Variables ---
+        self.connection = None
+        self.space_center = None
+        self.vessel = None
+        self.flight_data_event = None # To hold the scheduled Clock event
+
+        # --- Root Layout (Holds the current screen) ---
+        self.root_layout = BoxLayout(orientation='vertical')
+
+        # --- Initial Settings Layout ---
+        self.initial_layout = BoxLayout(orientation='vertical', padding=10, spacing=10)
+
+        # Explanation Text
+        explanation_text = """
+WELCOME TO THE KRPC KIVY INTERFACE!
+
+KRPC ALLOWS YOU TO CONTROL KERBAL SPACE PROGRAM USING EXTERNAL SCRIPTS.
+WITH KRPC, YOU CAN AUTOMATE LAUNCHES, PERFORM COMPLEX MANEUVERS,
+BUILD CUSTOM TELEMETRY DISPLAYS, AND MUCH MORE!
+"""
+        self.initial_layout.add_widget(Label(text=explanation_text, size_hint_y=None, height=150, halign='center', valign='top', text_size=(Window.width - 20, None)))
+
+        # --- Window Size Settings ---
+        self.initial_layout.add_widget(Label(text="WINDOW SIZE SETTINGS", size_hint_y=None, height=40, bold=True))
+
+        # Display Current Size
+        self.current_size_label = Label(text=f"CURRENT SIZE: {Window.width}X{Window.height}", size_hint_y=None, height=30)
+        self.initial_layout.add_widget(self.current_size_label)
+
+        # Input fields for New Size
+        size_input_layout = BoxLayout(orientation='horizontal', size_hint_y=None, height=40)
+        size_input_layout.add_widget(Label(text="NEW WIDTH:", size_hint_x=0.3))
+        self.width_input = TextInput(text=str(Window.width), multiline=False, size_hint_x=0.3)
+        size_input_layout.add_widget(self.width_input)
+        size_input_layout.add_widget(Label(text="NEW HEIGHT:", size_hint_x=0.3))
+        self.height_input = TextInput(text=str(Window.height), multiline=False, size_hint_x=0.3))
+        size_input_layout.add_widget(self.height_input)
+        self.initial_layout.add_widget(size_input_layout)
+
+        # Apply Size Button
+        apply_size_button = Button(text="APPLY WINDOW SIZE", size_hint_y=None, height=40)
+        apply_size_button.bind(on_press=self.apply_window_size)
+        self.initial_layout.add_widget(apply_size_button)
+
+        # --- kRPC Connection Details ---
+        self.initial_layout.add_widget(Label(text="KRPC CONNECTION DETAILS", size_hint_y=None, height=40, bold=True))
+
+        # Input fields for Address and Port
+        address_layout = BoxLayout(orientation='horizontal', size_hint_y=None, height=40)
+        address_layout.add_widget(Label(text="KRPC ADDRESS:", size_hint_x=0.4))
+        self.address_input = TextInput(text='127.0.0.1', multiline=False, size_hint_x=0.6)
+        address_layout.add_widget(self.address_input)
+        self.initial_layout.add_widget(address_layout)
+
+        port_layout = BoxLayout(orientation='horizontal', size_hint_y=None, height=40)
+        port_layout.add_widget(Label(text="KRPC PORT:", size_hint_x=0.4))
+        self.port_input = TextInput(text='50000', multiline=False, size_hint_x=0.6)
+        port_layout.add_widget(self.port_input)
+        self.initial_layout.add_widget(port_layout)
+
+        # Connect Button
+        connect_button = Button(text="CONNECT TO KRPC", size_hint_y=None, height=50)
+        connect_button.bind(on_press=self.connect_krpc)
+        self.initial_layout.add_widget(connect_button)
+
+        # Status Label (to show connection status)
+        self.status_label = Label(text="AWAITING CONNECTION DETAILS...")
+        self.initial_layout.add_widget(self.status_label)
+
+        # --- Flight Layout Structure (with perimeter buttons) ---
+        self.flight_layout = BoxLayout(orientation='vertical')
+
+        # Top Buttons
+        self.top_buttons_layout = BoxLayout(orientation='horizontal', size_hint_y=None, height=50)
+        top_button_labels = ["Flight", "Launch", "Orbit", "Map", "MNVR"] # Labels for top buttons
+        for label in top_button_labels:
+            self.top_buttons_layout.add_widget(Button(text=label.upper())) # Convert label to uppercase
+        self.flight_layout.add_widget(self.top_buttons_layout)
+
+        # Middle Section (Left Buttons, Center Content, Right Buttons)
+        self.middle_section_layout = BoxLayout(orientation='horizontal')
+
+        # Left Buttons
+        self.left_buttons_layout = BoxLayout(orientation='vertical', size_hint_x=None, width=80) # Fixed width for side buttons
+        left_button_labels = ["Camera", "Nav", "Engine", "Action", "Rover"] # Labels for left buttons
+        for label in left_button_labels:
+             self.left_buttons_layout.add_widget(Button(text=label.upper())) # Convert label to uppercase
+        self.middle_section_layout.add_widget(self.left_buttons_layout)
+
+        # Center Content (Navball and Orientation Label)
+        self.center_content_layout = BoxLayout(orientation='vertical')
+        # Instance of the Navball Widget Placeholder
+        self.navball_widget = NavballWidget(size_hint_y=0.7) # Navball takes 70% of vertical space
+        self.center_content_layout.add_widget(self.navball_widget)
+        # Label to display raw orientation data
+        self.orientation_label = Label(text="PITCH: --\nROLL: --\nHEADING: --", size_hint_y=0.3) # Uppercase labels
+        self.center_content_layout.add_widget(self.orientation_label)
+
+        self.middle_section_layout.add_widget(self.center_content_layout) # Add center content to middle section
+
+        # Right Buttons
+        self.right_buttons_layout = BoxLayout(orientation='vertical', size_hint_x=None, width=80) # Fixed width for side buttons
+        right_button_labels = ["Dock", "Land", "Target", "Rndz", "MechJeb"] # Labels for right buttons
+        for label in right_button_labels:
+            self.right_buttons_layout.add_widget(Button(text=label.upper())) # Convert label to uppercase
+        self.middle_section_layout.add_widget(self.right_buttons_layout)
+
+        # Bottom Buttons
+        self.bottom_buttons_layout = BoxLayout(orientation='horizontal', size_hint_y=None, height=50)
+        bottom_button_labels = ["Power", "Rsrc", "Sci", "Iva", "Eva"] # Labels for bottom buttons
+        for label in bottom_button_labels:
+            self.bottom_buttons_layout.add_widget(Button(text=label.upper())) # Convert label to uppercase
+        self.flight_layout.add_widget(self.bottom_buttons_layout)
+
+
+        # Add the initial layout to the root layout by default
+        self.root_layout.add_widget(self.initial_layout)
+
+        return self.root_layout
+
+    def apply_window_size(self, instance):
+        """Applies the new window size based on user input."""
+        try:
+            new_width = int(self.width_input.text)
+            new_height = int(self.height_input.text)
+            if new_width > 0 and new_height > 0:
+                Window.size = (new_width, new_height)
+                self.current_size_label.text = f"CURRENT SIZE: {Window.width}X{Window.height}"
+                print(f"Window size set to: {Window.width}x{Window.height}")
+                # Update the text_size of the explanation label after resizing
+                # Find the explanation label by iterating through children if the index is unstable
+                for child in self.initial_layout.children:
+                    if isinstance(child, Label) and "WELCOME TO THE KRPC KIVY INTERFACE!" in child.text.upper(): # Check uppercase text
+                         child.text_size = (Window.width - 20, None)
+                         break
+            else:
+                print("Width and height must be positive integers.")
+                # Optionally update a status label for size changes
+        except ValueError:
+            print("INVALID INPUT FOR WIDTH OR HEIGHT. PLEASE ENTER INTEGERS.") # Uppercase error
+            # Optionally update a status label for size changes
+        except Exception as e:
+            print(f"An error occurred while applying size: {e}")
+            # Optionally update a status label for size changes
+
+
+    def connect_krpc(self, instance):
+        """Attempts to establish a connection to the kRPC server using entered details."""
+        if self.connection is None or not self.connection.is_open:
+            address = self.address_input.text
+            port_str = self.port_input.text
+            try:
+                port = int(port_str)
+                self.status_label.text = f"ATTEMPTING TO CONNECT TO KSP AT {address}:{port}..."
+                print(f"Attempting to connect to KSP at {address}:{port}...")
+
+                # Connect to the kRPC server
+                self.connection = krpc.connect(
+                    name='Kivy App',
+                    address=address,
+                    rpc_port=port,
+                    stream_port=port + 1 # Assuming stream port is RPC port + 1
+                )
+                self.space_center = self.connection.space_center
+                print("Successfully connected to KSP!")
+                self.status_label.text = "SUCCESSFULLY CONNECTED!"
+
+                # Check for an active vessel and transition to flight view if found
+                self.check_and_transition_to_flight()
+
+
+            except ValueError:
+                self.status_label.text = "INVALID PORT NUMBER."
+            except ConnectionRefusedError:
+                print("Connection refused. Is KSP running and the kRPC server enabled?")
+                self.status_label.text = "CONNECTION FAILED: KSP NOT FOUND OR SERVER NOT RUNNING."
+            except Exception as e:
+                print(f"An error occurred during connection: {e}")
+                self.status_label.text = f"CONNECTION ERROR: {e}".upper() # Convert error message to uppercase
+        else:
+            self.status_label.text = "ALREADY CONNECTED TO KRPC."
+            print("Already connected to kRPC.")
+
+    def check_and_transition_to_flight(self):
+        """Checks for an active vessel and transitions to the flight layout if found."""
+        if self.space_center:
+            try:
+                self.vessel = self.space_center.active_vessel
+                if self.vessel:
+                    print(f"Active vessel detected: {self.vessel.name}")
+                    # Clear initial layout and add flight layout
+                    self.root_layout.clear_widgets()
+                    self.root_layout.add_widget(self.flight_layout)
+                    self.status_label.text = f"CONNECTED TO {self.vessel.name}".upper() # Update status to uppercase
+
+                    # Start updating flight data
+                    # Schedule the update_flight_data method to run periodically (e.g., 10 times per second)
+                    self.flight_data_event = Clock.schedule_interval(self.update_flight_data, 1/10.0)
+
+                else:
+                    print("No active vessel detected.")
+                    self.status_label.text = "CONNECTED, BUT NO ACTIVE VESSEL. LAUNCH A CRAFT OR GO TO TRACKING STATION."
+                    # Stay on the initial screen if no vessel
+
+            except krpc.client.RPCException as rpc_e:
+                 print(f"kRPC error checking for active vessel: {rpc_e}")
+                 self.status_label.text = "CONNECTED, BUT KRPC ERROR CHECKING VESSEL."
+                 # Consider if this error should force a disconnect or retry
+            except Exception as e:
+                print(f"An error occurred while checking for vessel: {e}")
+                self.status_label.text = f"ERROR CHECKING VESSEL: {e}".upper() # Convert error message to uppercase
+                # Consider if this error should force a disconnect or retry
+        else:
+             self.status_label.text = "NOT CONNECTED TO KSP. CANNOT CHECK FOR VESSEL."
+
+
+    def update_flight_data(self, dt):
+        """Fetches and displays live flight data and updates the Navball widget."""
+        if self.vessel and self.connection and self.connection.is_open:
+            try:
+                # Get flight data in the vessel's surface attachment reference frame
+                # This reference frame is good for pitch/roll/heading relative to the craft's orientation
+                flight = self.vessel.flight(self.vessel.surface_attachment_reference_frame)
+
+                pitch = flight.pitch
+                roll = flight.roll
+                heading = flight.heading
+
+                # Update the raw orientation label (can be removed later)
+                self.orientation_label.text = f"PITCH: {pitch:.2f}\nROLL: {roll:.2f}\nHEADING: {heading:.2f}" # Uppercase labels
+
+                # --- Update your custom Navball widget here ---
+                self.navball_widget.update_orientation(pitch, roll, heading)
+                # You'll also need to fetch and pass marker directions (prograde, target, etc.) here
+                # Example (needs appropriate reference frame and handling):
+                # prograde = self.vessel.velocity(self.vessel.orbital_reference_frame)
+                # self.navball_widget.update_markers(prograde=prograde)
+                # --------------------------------------------------------------------------
+
+            except krpc.client.RPCException as rpc_e:
+                print(f"kRPC error fetching flight data: {rpc_e}")
+                self.orientation_label.text = "FLIGHT DATA ERROR (RPC)." # Uppercase
+                # This might indicate the vessel was destroyed or unloaded
+                self.handle_vessel_loss()
+            except Exception as e:
+                print(f"An error occurred while updating flight data: {e}")
+                self.orientation_label.text = f"UPDATE ERROR: {e}".upper() # Convert error message to uppercase
+                self.stop_flight_data_updates() # Stop updates on unexpected errors
+
+        else:
+            # If vessel is None or connection is closed, stop updates
+            print("update_flight_data called without active vessel or connection.")
+            self.orientation_label.text = "NO ACTIVE VESSEL DATA." # Uppercase
+            self.stop_flight_data_updates()
+            # Also handle transition back if needed
+            self.handle_vessel_loss()
+
+
+    def handle_vessel_loss(self):
+        """Handles the scenario where the active vessel is lost during flight."""
+        self.stop_flight_data_updates()
+        self.vessel = None # Clear the vessel reference
+        print("Vessel lost. Transitioning back to initial screen.")
+        # Clear the flight layout and add back the initial layout
+        self.root_layout.clear_widgets()
+        self.root_layout.add_widget(self.initial_layout)
+        self.status_label.text = "VESSEL LOST. CONNECTED, BUT NO ACTIVE VESSEL." # Uppercase status
+
+
+    def on_stop(self):
+        """Called when the Kivy application is stopped."""
+        self.stop_flight_data_updates() # Ensure updates are stopped
+        if self.connection is not None and self.connection.is_open:
+            print("CLOSING KRPC CONNECTION...") # Uppercase print message
+            self.connection.close()
+            print("KRPC CONNECTION CLOSED.") # Uppercase print message
+
+# --- Run the App ---
+if __name__ == '__main__':
+    KRPC_Kivy_App().run()
